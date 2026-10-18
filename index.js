@@ -26,12 +26,35 @@ app.use((req, res, next) => {
 });
 
 // Health check
-app.get('/api/health', (req, res) => {
+app.get('/api/health', async (req, res) => {
+  let dbStatus = 'connected';
+  try {
+    await connectDB();
+  } catch (err) {
+    dbStatus = `disconnected (${err.message})`;
+  }
+
   res.status(200).json({
     status: 'ok',
     app: 'HanGo Cloud Sync Service',
+    database: dbStatus,
     time: new Date().toISOString(),
   });
+});
+
+// Ensure database connection for API routes
+app.use('/api', async (req, res, next) => {
+  if (req.path === '/health') return next();
+  try {
+    await connectDB();
+    next();
+  } catch (error) {
+    console.error('[MongoDB Connection Error]', error.message);
+    res.status(500).json({
+      error: 'Database connection failed. Please check MongoDB Atlas connection or IP whitelist.',
+      details: error.message,
+    });
+  }
 });
 
 // Root route
@@ -89,7 +112,7 @@ function getLocalIPAddresses() {
   return [...new Set(addresses)];
 }
 
-// Start server only after database connection succeeds
+// Start server locally (only when executed directly with node)
 async function startServer() {
   let server;
 
@@ -119,4 +142,11 @@ async function startServer() {
   }
 }
 
-startServer();
+// Only listen on port if run directly (node index.js).
+// Vercel serverless runtime imports this file without running app.listen.
+if (require.main === module) {
+  startServer();
+}
+
+// Export Express app for Vercel Serverless Functions
+module.exports = app;

@@ -5,33 +5,41 @@ const DB_NAME = 'hango';
 
 let client = null;
 let db = null;
+let connectionPromise = null;
 
 async function connectDB() {
   if (db) return db;
+  if (connectionPromise) return connectionPromise;
 
-  try {
-    client = new MongoClient(MONGO_URI, {
-      maxPoolSize: 10,
-      serverSelectionTimeoutMS: 8000,
-    });
+  connectionPromise = (async () => {
+    try {
+      client = new MongoClient(MONGO_URI, {
+        maxPoolSize: 10,
+        serverSelectionTimeoutMS: 8000,
+      });
 
-    await client.connect();
-    db = client.db(DB_NAME);
-    console.log(`[MongoDB] Connected successfully to database: "${DB_NAME}"`);
+      await client.connect();
+      db = client.db(DB_NAME);
+      console.log(`[MongoDB] Connected successfully to database: "${DB_NAME}"`);
 
-    // Ensure indexes for fast and secure lookups
-    const usersCol = db.collection('users');
-    await usersCol.createIndex({ email: 1 }, { unique: true });
-    await usersCol.createIndex({ username: 1 }, { unique: true, sparse: true });
+      // Ensure indexes for fast and secure lookups
+      const usersCol = db.collection('users');
+      await usersCol.createIndex({ email: 1 }, { unique: true });
+      await usersCol.createIndex({ username: 1 }, { unique: true, sparse: true });
 
-    const backupsCol = db.collection('user_backups');
-    await backupsCol.createIndex({ userId: 1 }, { unique: true });
+      const backupsCol = db.collection('user_backups');
+      await backupsCol.createIndex({ userId: 1 }, { unique: true });
 
-    return db;
-  } catch (error) {
-    console.error('[MongoDB] Connection error:', error.message);
-    throw error;
-  }
+      return db;
+    } catch (error) {
+      connectionPromise = null;
+      db = null;
+      console.error('[MongoDB] Connection error:', error.message);
+      throw error;
+    }
+  })();
+
+  return connectionPromise;
 }
 
 function getDB() {
