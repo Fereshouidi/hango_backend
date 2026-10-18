@@ -1,84 +1,122 @@
+
 require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const os = require('os');
+
 const { connectDB } = require('./db');
 const authRoutes = require('./routes/auth');
 const syncRoutes = require('./routes/sync');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
-// Enable CORS for all origins (Expo web, React Native mobile, emulators)
+// Middleware
 app.use(cors());
-
-// Support large payloads for comprehensive data backups
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Request logging
 app.use((req, res, next) => {
-  console.log(`[${new Date().toLocaleTimeString()}] ${req.method} ${req.url}`);
+  console.log(
+    `[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`
+  );
   next();
 });
 
-// Health check endpoint
+// Health check
 app.get('/api/health', (req, res) => {
-  res.json({
+  res.status(200).json({
     status: 'ok',
     app: 'HanGo Cloud Sync Service',
     time: new Date().toISOString(),
   });
 });
 
-// API Routes
+// Root route
+app.get('/', (req, res) => {
+  res.status(200).send('HanGo Cloud Sync Service is running!');
+});
+
+// API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/sync', syncRoutes);
+
+// Handle unknown routes
+app.use((req, res) => {
+  res.status(404).json({
+    error: 'Route not found',
+    path: req.originalUrl,
+  });
+});
 
 // Global error handler
 app.use((err, req, res, next) => {
   console.error('[Server Error]', err);
-  res.status(500).json({ error: err.message || 'Internal Server Error' });
+
+  if (res.headersSent) {
+    return next(err);
+  }
+
+  const status = err.status || err.statusCode || 500;
+
+  res.status(status).json({
+    error:
+      status >= 500
+        ? 'Internal Server Error'
+        : err.message || 'Request Error',
+  });
 });
 
-// Helper to get local network IP addresses
+// Local network IP addresses
 function getLocalIPAddresses() {
   const interfaces = os.networkInterfaces();
   const addresses = [];
-  for (const name of Object.keys(interfaces)) {
-    for (const iface of interfaces[name]) {
-      if (iface.family === 'IPv4' && !iface.internal) {
+
+  for (const entries of Object.values(interfaces)) {
+    for (const iface of entries || []) {
+      if (
+        iface.family === 'IPv4' &&
+        !iface.internal &&
+        !iface.address.startsWith('169.254.')
+      ) {
         addresses.push(iface.address);
       }
     }
   }
-  return addresses;
+
+  return [...new Set(addresses)];
 }
 
-app.get('/', async (req, res) => {
-  res.send('<h1>HanGo Cloud Sync Service is running!</h1>');
-})
-
-// Start server
+// Start server only after database connection succeeds
 async function startServer() {
+  let server;
+
   try {
     await connectDB();
-    const server = app.listen(PORT, '0.0.0.0', () => {
-      console.log(`\n======================================================`);
-      console.log(`🚀 HanGo MongoDB Cloud Sync Server is running!`);
-      console.log(`📡 Localhost:     http://localhost:${PORT}`);
-      const ips = getLocalIPAddresses();
-      ips.forEach((ip) => {
-        console.log(`📱 LAN (Mobile):  http://${ip}:${PORT}`);
-      });
-      console.log(`======================================================\n`);
+
+    server = app.listen(PORT, '0.0.0.0', () => {
+      console.log('\n==============================================');
+      console.log('HanGo Cloud Sync Server is running!');
+      console.log(`Local: http://localhost:${PORT}`);
+      console.log(`Health: http://localhost:${PORT}/api/health`);
+
+      for (const ip of getLocalIPAddresses()) {
+        console.log(`LAN: http://${ip}:${PORT}`);
+      }
+
+      console.log('==============================================\n');
     });
-    return server;
+
+    server.on('error', (error) => {
+      console.error('[Server Listen Error]', error);
+      process.exitCode = 1;
+    });
   } catch (error) {
-    console.error('Failed to start server:', error);
-    process.exit(1);
+    console.error('[Server Startup Error]', error);
+    process.exitCode = 1;
   }
 }
 
 startServer();
-
