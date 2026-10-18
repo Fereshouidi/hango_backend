@@ -1,5 +1,5 @@
 const express = require('express');
-const { authenticateToken } = require('../middleware/auth');
+const { requireAuth } = require('../middleware/auth');
 const {
   getPlansAndMethods,
   updatePaymentSettings,
@@ -36,13 +36,13 @@ router.get('/plans', getPlansAndMethods);
 // Authenticated user endpoints
 // ──────────────────────────────────────────────
 // POST /api/payments/submit  – user submits payment proof
-router.post('/submit', authenticateToken, submitPayment);
+router.post('/submit', requireAuth, submitPayment);
 
 // GET  /api/payments/status  – user checks their subscription status
-router.get('/status', authenticateToken, getUserSubscriptionStatus);
+router.get('/status', requireAuth, getUserSubscriptionStatus);
 
 // GET  /api/payments/history – user views their payment history
-router.get('/history', authenticateToken, getUserPaymentHistory);
+router.get('/history', requireAuth, getUserPaymentHistory);
 
 // ──────────────────────────────────────────────
 // Admin endpoints (protected by x-admin-key)
