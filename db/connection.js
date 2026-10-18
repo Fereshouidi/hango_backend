@@ -28,6 +28,12 @@ async function connectDB() {
       const backupsCol = db.collection('user_backups');
       await backupsCol.createIndex({ userId: 1 }, { unique: true });
 
+      const updatesCol = db.collection('updates');
+      await updatesCol.createIndex({ buildNumber: -1 });
+      await updatesCol.createIndex({ version: 1 });
+      await updatesCol.createIndex({ isActive: 1 });
+      await updatesCol.createIndex({ platform: 1 });
+
       return db;
     } catch (error) {
       connectionPromise = null;
@@ -55,9 +61,14 @@ function getBackupsCollection() {
   return getDB().collection('user_backups');
 }
 
+function getUpdatesCollection() {
+  return getDB().collection('updates');
+}
+
 module.exports = {
   connectDB,
   getDB,
   getUsersCollection,
   getBackupsCollection,
+  getUpdatesCollection,
 };
