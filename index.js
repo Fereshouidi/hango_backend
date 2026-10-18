@@ -55,6 +55,10 @@ function getLocalIPAddresses() {
   return addresses;
 }
 
+app.get('/', async (req, res) => {
+  res.send('<h1>HanGo Cloud Sync Service is running!</h1>');
+})
+
 // Start server
 async function startServer() {
   try {
