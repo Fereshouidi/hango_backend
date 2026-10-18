@@ -214,8 +214,53 @@ async function getUserSubscriptionStatus(req, res) {
     const now = new Date();
     let isSubscribed = Boolean(user.isSubscribed);
 
+    // Auto-sync if an approved payment exists in the database
+    const latestApprovedPayment = await Payment.findOne({
+      userId,
+      status: 'approved',
+    }).sort({ reviewedAt: -1, updatedAt: -1, createdAt: -1 });
+
+    if (latestApprovedPayment) {
+      const baseDate =
+        latestApprovedPayment.subscriptionStartedAt ||
+        latestApprovedPayment.reviewedAt ||
+        latestApprovedPayment.updatedAt ||
+        latestApprovedPayment.createdAt ||
+        now;
+
+      let expiresAt = latestApprovedPayment.subscriptionExpiresAt;
+      if (!expiresAt) {
+        expiresAt = new Date(baseDate);
+        expiresAt.setDate(expiresAt.getDate() + (latestApprovedPayment.durationMonths || 1) * 30);
+        latestApprovedPayment.subscriptionStartedAt = baseDate;
+        latestApprovedPayment.subscriptionExpiresAt = expiresAt;
+        await latestApprovedPayment.save();
+      }
+
+      if (expiresAt > now) {
+        isSubscribed = true;
+        if (!user.isSubscribed || user.subscriptionStatus !== 'active' || !user.subscriptionExpiresAt) {
+          user.isSubscribed = true;
+          user.subscriptionStatus = 'active';
+          user.subscriptionExpiresAt = expiresAt;
+          user.subscriptionPlan = `${latestApprovedPayment.durationMonths || 1}_month`;
+          await user.save();
+        }
+      }
+    }
+
+    // Fallback: If user was manually marked isSubscribed in DB without expiresAt
+    if (user.isSubscribed && !user.subscriptionExpiresAt) {
+      const defaultExp = new Date();
+      defaultExp.setDate(defaultExp.getDate() + 30);
+      user.subscriptionExpiresAt = defaultExp;
+      user.subscriptionStatus = 'active';
+      isSubscribed = true;
+      await user.save();
+    }
+
     // Auto-expire subscription if past expiration date
-    if (isSubscribed && user.subscriptionExpiresAt && user.subscriptionExpiresAt < now) {
+    if (isSubscribed && user.subscriptionExpiresAt && new Date(user.subscriptionExpiresAt) < now) {
       isSubscribed = false;
       user.isSubscribed = false;
       user.subscriptionStatus = 'expired';
