@@ -200,7 +200,17 @@ async function submitPayment(req, res) {
 
 /**
  * GET /api/payments/status
- * Get the current user's active subscription status and any pending payment
+ * Get the current user's active subscription status and any pending payment.
+ *
+ * Priority order (most authoritative → least):
+ *  1. Latest APPROVED payment  → user is subscribed (until expiry)
+ *  2. User document flagged as cancelled/expired → revoke subscription
+ *  3. Latest REJECTED/CANCELLED payment → revoke subscription
+ *  4. User document manually set isSubscribed:true → honour it
+ *  5. Default → not subscribed
+ *
+ * A PENDING payment does NOT affect subscription state — it is only surfaced
+ * separately so the UI can show "under review" messaging.
  */
 async function getUserSubscriptionStatus(req, res) {
   try {
@@ -212,62 +222,99 @@ async function getUserSubscriptionStatus(req, res) {
     }
 
     const now = new Date();
-    let isSubscribed = Boolean(user.isSubscribed);
 
-    // Auto-sync if an approved payment exists in the database
-    const latestApprovedPayment = await Payment.findOne({
+    // Fetch the most-recently-updated payment that is NOT pending.
+    // This prevents a fresh pending submission from shadowing a previously
+    // approved (or cancelled) payment record.
+    const latestActionedPayment = await Payment.findOne({
       userId,
-      status: 'approved',
-    }).sort({ reviewedAt: -1, updatedAt: -1, createdAt: -1 });
+      status: { $in: ['approved', 'rejected', 'cancelled'] },
+    }).sort({ updatedAt: -1, createdAt: -1 });
 
-    if (latestApprovedPayment) {
+    let isSubscribed = false;
+
+    // ── PRIORITY 1: Most recent approved payment ──────────────────────────
+    if (latestActionedPayment && latestActionedPayment.status === 'approved') {
       const baseDate =
-        latestApprovedPayment.subscriptionStartedAt ||
-        latestApprovedPayment.reviewedAt ||
-        latestApprovedPayment.updatedAt ||
-        latestApprovedPayment.createdAt ||
+        latestActionedPayment.subscriptionStartedAt ||
+        latestActionedPayment.reviewedAt ||
+        latestActionedPayment.updatedAt ||
+        latestActionedPayment.createdAt ||
         now;
 
-      let expiresAt = latestApprovedPayment.subscriptionExpiresAt;
+      let expiresAt = latestActionedPayment.subscriptionExpiresAt;
       if (!expiresAt) {
         expiresAt = new Date(baseDate);
-        expiresAt.setDate(expiresAt.getDate() + (latestApprovedPayment.durationMonths || 1) * 30);
-        latestApprovedPayment.subscriptionStartedAt = baseDate;
-        latestApprovedPayment.subscriptionExpiresAt = expiresAt;
-        await latestApprovedPayment.save();
+        expiresAt.setDate(
+          expiresAt.getDate() + (latestActionedPayment.durationMonths || 1) * 30
+        );
+        latestActionedPayment.subscriptionStartedAt = baseDate;
+        latestActionedPayment.subscriptionExpiresAt = expiresAt;
+        await latestActionedPayment.save();
       }
 
-      if (expiresAt > now) {
+      if (new Date(expiresAt) > now) {
         isSubscribed = true;
-        if (!user.isSubscribed || user.subscriptionStatus !== 'active' || !user.subscriptionExpiresAt) {
-          user.isSubscribed = true;
-          user.subscriptionStatus = 'active';
-          user.subscriptionExpiresAt = expiresAt;
-          user.subscriptionPlan = `${latestApprovedPayment.durationMonths || 1}_month`;
-          await user.save();
-        }
+        user.isSubscribed = true;
+        user.subscriptionStatus = 'active';
+        user.subscriptionExpiresAt = expiresAt;
+        user.subscriptionPlan = `${latestActionedPayment.durationMonths || 1}_month`;
+        await user.save();
+      } else {
+        // Subscription window has elapsed
+        isSubscribed = false;
+        user.isSubscribed = false;
+        user.subscriptionStatus = 'expired';
+        user.subscriptionExpiresAt = expiresAt; // keep for display
+        await user.save();
       }
     }
-
-    // Fallback: If user was manually marked isSubscribed in DB without expiresAt
-    if (user.isSubscribed && !user.subscriptionExpiresAt) {
-      const defaultExp = new Date();
-      defaultExp.setDate(defaultExp.getDate() + 30);
-      user.subscriptionExpiresAt = defaultExp;
-      user.subscriptionStatus = 'active';
-      isSubscribed = true;
-      await user.save();
-    }
-
-    // Auto-expire subscription if past expiration date
-    if (isSubscribed && user.subscriptionExpiresAt && new Date(user.subscriptionExpiresAt) < now) {
+    // ── PRIORITY 2: Admin cancelled/rejected the payment ──────────────────
+    else if (
+      latestActionedPayment &&
+      (latestActionedPayment.status === 'rejected' ||
+        latestActionedPayment.status === 'cancelled')
+    ) {
       isSubscribed = false;
       user.isSubscribed = false;
-      user.subscriptionStatus = 'expired';
+      user.subscriptionStatus = latestActionedPayment.status;
+      user.subscriptionExpiresAt = null;
       await user.save();
     }
+    // ── PRIORITY 3: User document explicitly not subscribed ───────────────
+    else if (
+      user.subscriptionStatus === 'cancelled' ||
+      user.subscriptionStatus === 'expired'
+    ) {
+      isSubscribed = false;
+      user.isSubscribed = false;
+      await user.save();
+    }
+    // ── PRIORITY 4: Admin directly set isSubscribed:true on user doc ──────
+    else if (user.isSubscribed === true) {
+      if (!user.subscriptionExpiresAt) {
+        const defaultExp = new Date();
+        defaultExp.setDate(defaultExp.getDate() + 30);
+        user.subscriptionExpiresAt = defaultExp;
+        await user.save();
+      }
 
-    // Check for any pending payment under review
+      if (new Date(user.subscriptionExpiresAt) > now) {
+        isSubscribed = true;
+        user.subscriptionStatus = 'active';
+        await user.save();
+      } else {
+        isSubscribed = false;
+        user.isSubscribed = false;
+        user.subscriptionStatus = 'expired';
+        await user.save();
+      }
+    } else {
+      // ── DEFAULT: not subscribed ─────────────────────────────────────────
+      isSubscribed = false;
+    }
+
+    // Always separately surface any pending (under-review) payment
     const pendingPayment = await Payment.findOne({
       userId,
       status: 'pending',
@@ -275,13 +322,15 @@ async function getUserSubscriptionStatus(req, res) {
 
     let daysRemaining = 0;
     if (isSubscribed && user.subscriptionExpiresAt) {
-      const diffMs = new Date(user.subscriptionExpiresAt).getTime() - now.getTime();
+      const diffMs =
+        new Date(user.subscriptionExpiresAt).getTime() - now.getTime();
       daysRemaining = Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
     }
 
     res.json({
       isSubscribed,
-      subscriptionStatus: user.subscriptionStatus || (isSubscribed ? 'active' : 'none'),
+      subscriptionStatus:
+        user.subscriptionStatus || (isSubscribed ? 'active' : 'none'),
       subscriptionPlan: user.subscriptionPlan,
       subscriptionExpiresAt: user.subscriptionExpiresAt,
       daysRemaining,
