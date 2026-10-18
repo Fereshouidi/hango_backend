@@ -54,7 +54,7 @@ async function register(req, res) {
     const token = jwt.sign(
       { userId, email, username },
       config.JWT_SECRET,
-      { expiresIn: config.JWT_EXPIRES_IN }
+      { expiresIn: config.JWT_EXPIRES_IN || '30d' }
     );
 
     res.status(201).json({
@@ -117,7 +117,7 @@ async function login(req, res) {
     const token = jwt.sign(
       { userId, email: user.email, username: user.username },
       config.JWT_SECRET,
-      { expiresIn: config.JWT_EXPIRES_IN }
+      { expiresIn: config.JWT_EXPIRES_IN || '30d' }
     );
 
     res.json({
@@ -132,7 +132,10 @@ async function login(req, res) {
     });
   } catch (error) {
     console.error('[Login error]', error);
-    res.status(500).json({ error: 'Internal server error during login.' });
+    res.status(500).json({
+      error: 'Internal server error during login.',
+      details: error.message,
+    });
   }
 }
 

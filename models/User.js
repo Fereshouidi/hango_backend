@@ -28,7 +28,6 @@ const userSchema = new mongoose.Schema(
     // The platform the user is on ('android', 'ios', 'web', 'unknown')
     platform: {
       type: String,
-      enum: ['android', 'ios', 'web', 'unknown'],
       default: 'unknown',
     },
     lastLoginAt: {
@@ -55,7 +54,15 @@ const userSchema = new mongoose.Schema(
     },
     subscriptionStatus: {
       type: String,
-      enum: ['none', 'pending', 'active', 'expired'],
+      enum: [
+        'none',
+        'pending',
+        'active',
+        'expired',
+        'cancelled',
+        'canceled',
+        'rejected',
+      ],
       default: 'none',
     },
   },
