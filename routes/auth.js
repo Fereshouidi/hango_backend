@@ -10,5 +10,6 @@ router.post('/login', authController.login);
 
 // Protected auth endpoints
 router.get('/me', requireAuth, authController.getProfile);
+router.patch('/version', requireAuth, authController.updateAppVersion);
 
 module.exports = router;

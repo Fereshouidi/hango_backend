@@ -1,44 +1,30 @@
-const { MongoClient } = require('mongodb');
+const mongoose = require('mongoose');
 const config = require('../config');
 
-let client = null;
-let db = null;
 let connectionPromise = null;
 
 async function connectDB() {
-  if (db) return db;
-  if (connectionPromise) return connectionPromise;
+  if (mongoose.connection.readyState === 1 && mongoose.connection.db) {
+    return mongoose.connection.db;
+  }
+
+  if (connectionPromise) {
+    return connectionPromise;
+  }
 
   connectionPromise = (async () => {
     try {
-      client = new MongoClient(config.MONGO_URI, {
-        maxPoolSize: 10,
+      await mongoose.connect(config.MONGO_URI, {
+        dbName: config.DB_NAME,
         serverSelectionTimeoutMS: 8000,
+        maxPoolSize: 10,
       });
 
-      await client.connect();
-      db = client.db(config.DB_NAME);
-      console.log(`[MongoDB] Connected successfully to database: "${config.DB_NAME}"`);
-
-      // Ensure indexes for fast and secure lookups
-      const usersCol = db.collection('users');
-      await usersCol.createIndex({ email: 1 }, { unique: true });
-      await usersCol.createIndex({ username: 1 }, { unique: true, sparse: true });
-
-      const backupsCol = db.collection('user_backups');
-      await backupsCol.createIndex({ userId: 1 }, { unique: true });
-
-      const updatesCol = db.collection('updates');
-      await updatesCol.createIndex({ buildNumber: -1 });
-      await updatesCol.createIndex({ version: 1 });
-      await updatesCol.createIndex({ isActive: 1 });
-      await updatesCol.createIndex({ platform: 1 });
-
-      return db;
+      console.log(`[MongoDB/Mongoose] Connected successfully to database: "${config.DB_NAME}"`);
+      return mongoose.connection.db;
     } catch (error) {
       connectionPromise = null;
-      db = null;
-      console.error('[MongoDB] Connection error:', error.message);
+      console.error('[MongoDB/Mongoose] Connection error:', error.message);
       throw error;
     }
   })();
@@ -47,10 +33,10 @@ async function connectDB() {
 }
 
 function getDB() {
-  if (!db) {
+  if (!mongoose.connection.db) {
     throw new Error('Database not initialized. Call connectDB() first.');
   }
-  return db;
+  return mongoose.connection.db;
 }
 
 function getUsersCollection() {
@@ -71,4 +57,5 @@ module.exports = {
   getUsersCollection,
   getBackupsCollection,
   getUpdatesCollection,
+  mongoose,
 };

@@ -1,16 +1,15 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { ObjectId } = require('mongodb');
 const config = require('../config');
-const { getUsersCollection, getBackupsCollection } = require('../db/connection');
+const { User, Backup } = require('../models');
 
 /**
  * POST /api/auth/register
- * Create a new user account
+ * Create a new user account with initial app version
  */
 async function register(req, res) {
   try {
-    let { email, username, password } = req.body;
+    let { email, username, password, appVersion, platform } = req.body;
 
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required.' });
@@ -18,21 +17,20 @@ async function register(req, res) {
 
     email = email.trim().toLowerCase();
     username = (username || email.split('@')[0]).trim();
+    const version = (appVersion || req.headers['x-app-version'] || '1.0.0').trim();
 
     if (password.length < 6) {
       return res.status(400).json({ error: 'Password must be at least 6 characters long.' });
     }
 
-    const usersCol = getUsersCollection();
-
     // Check if email already exists
-    const existingEmail = await usersCol.findOne({ email });
+    const existingEmail = await User.findOne({ email });
     if (existingEmail) {
       return res.status(409).json({ error: 'An account with this email already exists.' });
     }
 
     // Check if username already exists
-    const existingUsername = await usersCol.findOne({ username });
+    const existingUsername = await User.findOne({ username });
     if (existingUsername) {
       return res.status(409).json({ error: 'This username is already taken. Please choose another.' });
     }
@@ -41,16 +39,16 @@ async function register(req, res) {
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
 
-    const newUser = {
+    const newUser = await User.create({
       email,
       username,
       passwordHash,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
+      appVersion: version,
+      platform: platform || 'unknown',
+      lastLoginAt: new Date(),
+    });
 
-    const result = await usersCol.insertOne(newUser);
-    const userId = result.insertedId.toString();
+    const userId = newUser._id.toString();
 
     // Generate JWT
     const token = jwt.sign(
@@ -64,8 +62,9 @@ async function register(req, res) {
       token,
       user: {
         id: userId,
-        email,
-        username,
+        email: newUser.email,
+        username: newUser.username,
+        appVersion: newUser.appVersion,
       },
     });
   } catch (error) {
@@ -76,21 +75,20 @@ async function register(req, res) {
 
 /**
  * POST /api/auth/login
- * Authenticate existing user
+ * Authenticate existing user and update their current app version
  */
 async function login(req, res) {
   try {
-    let { identifier, email, password } = req.body;
+    let { identifier, email, password, appVersion, platform } = req.body;
     const loginId = (identifier || email || '').trim().toLowerCase();
+    const version = (appVersion || req.headers['x-app-version'] || '').trim();
 
     if (!loginId || !password) {
       return res.status(400).json({ error: 'Email/username and password are required.' });
     }
 
-    const usersCol = getUsersCollection();
-
     // Find by email or username
-    const user = await usersCol.findOne({
+    const user = await User.findOne({
       $or: [{ email: loginId }, { username: loginId }],
     });
 
@@ -102,6 +100,16 @@ async function login(req, res) {
     if (!isMatch) {
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
+
+    // Record the current version of the app the user is using
+    if (version) {
+      user.appVersion = version;
+    }
+    if (platform) {
+      user.platform = platform;
+    }
+    user.lastLoginAt = new Date();
+    await user.save();
 
     const userId = user._id.toString();
 
@@ -119,6 +127,7 @@ async function login(req, res) {
         id: userId,
         email: user.email,
         username: user.username,
+        appVersion: user.appVersion,
       },
     });
   } catch (error) {
@@ -133,22 +142,23 @@ async function login(req, res) {
  */
 async function getProfile(req, res) {
   try {
-    const usersCol = getUsersCollection();
-    const user = await usersCol.findOne({ _id: new ObjectId(req.user.userId) });
+    const user = await User.findById(req.user.userId);
 
     if (!user) {
       return res.status(404).json({ error: 'User not found.' });
     }
 
-    const backupsCol = getBackupsCollection();
-    const backup = await backupsCol.findOne({ userId: req.user.userId });
+    const backup = await Backup.findOne({ userId: req.user.userId });
 
     res.json({
       user: {
         id: user._id.toString(),
         email: user.email,
         username: user.username,
+        appVersion: user.appVersion,
+        platform: user.platform,
         createdAt: user.createdAt,
+        lastLoginAt: user.lastLoginAt,
       },
       lastBackup: backup
         ? {
@@ -163,8 +173,43 @@ async function getProfile(req, res) {
   }
 }
 
+/**
+ * PATCH /api/auth/version
+ * Explicitly update the user's current app version
+ */
+async function updateAppVersion(req, res) {
+  try {
+    const { appVersion, platform } = req.body;
+    if (!appVersion) {
+      return res.status(400).json({ error: 'appVersion is required.' });
+    }
+
+    const updateFields = { appVersion: appVersion.trim() };
+    if (platform) updateFields.platform = platform;
+
+    const user = await User.findByIdAndUpdate(
+      req.user.userId,
+      { $set: updateFields },
+      { new: true }
+    );
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    res.json({
+      message: 'App version updated successfully.',
+      appVersion: user.appVersion,
+    });
+  } catch (error) {
+    console.error('[UpdateAppVersion error]', error);
+    res.status(500).json({ error: 'Failed to update app version.' });
+  }
+}
+
 module.exports = {
   register,
   login,
   getProfile,
+  updateAppVersion,
 };

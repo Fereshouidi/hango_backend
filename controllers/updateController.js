@@ -1,5 +1,4 @@
-const { ObjectId } = require('mongodb');
-const { getUpdatesCollection } = require('../db/connection');
+const { Update } = require('../models');
 
 /**
  * Compare two semantic version strings (e.g. "1.2.0" vs "1.1.9")
@@ -43,22 +42,16 @@ async function checkUpdate(req, res) {
     const clientBuild = Number(req.query.build || req.query.buildNumber) || 0;
     const platform = (req.query.platform || 'all').trim().toLowerCase();
 
-    const updatesCol = getUpdatesCollection();
-
     // Query active updates for this platform or 'all'
     const platformFilter =
       platform && platform !== 'all'
         ? { platform: { $in: [platform, 'all'] } }
         : {};
 
-    const latest = await updatesCol
-      .find({
-        isActive: true,
-        ...platformFilter,
-      })
-      .sort({ buildNumber: -1, createdAt: -1 })
-      .limit(1)
-      .next();
+    const latest = await Update.findOne({
+      isActive: true,
+      ...platformFilter,
+    }).sort({ buildNumber: -1, createdAt: -1 });
 
     if (!latest) {
       return res.json({
@@ -139,18 +132,16 @@ async function checkUpdate(req, res) {
 async function getLatestUpdate(req, res) {
   try {
     const platform = (req.query.platform || 'all').trim().toLowerCase();
-    const updatesCol = getUpdatesCollection();
 
     const platformFilter =
       platform && platform !== 'all'
         ? { platform: { $in: [platform, 'all'] } }
         : {};
 
-    const latest = await updatesCol
-      .find({ isActive: true, ...platformFilter })
-      .sort({ buildNumber: -1, createdAt: -1 })
-      .limit(1)
-      .next();
+    const latest = await Update.findOne({ isActive: true, ...platformFilter }).sort({
+      buildNumber: -1,
+      createdAt: -1,
+    });
 
     if (!latest) {
       return res.status(404).json({ error: 'No active updates found.' });
@@ -169,12 +160,7 @@ async function getLatestUpdate(req, res) {
  */
 async function getAllUpdates(req, res) {
   try {
-    const updatesCol = getUpdatesCollection();
-    const updates = await updatesCol
-      .find({})
-      .sort({ createdAt: -1 })
-      .toArray();
-
+    const updates = await Update.find({}).sort({ createdAt: -1 });
     res.json(updates);
   } catch (error) {
     console.error('[GetAllUpdates Error]', error);
@@ -208,16 +194,10 @@ async function createUpdate(req, res) {
       });
     }
 
-    const updatesCol = getUpdatesCollection();
-
     // Auto-calculate buildNumber if not provided
     let calculatedBuild = Number(buildNumber);
     if (!calculatedBuild) {
-      const highest = await updatesCol
-        .find({})
-        .sort({ buildNumber: -1 })
-        .limit(1)
-        .next();
+      const highest = await Update.findOne({}).sort({ buildNumber: -1 });
       calculatedBuild = highest && highest.buildNumber ? highest.buildNumber + 1 : 1;
     }
 
@@ -232,8 +212,7 @@ async function createUpdate(req, res) {
         .filter(Boolean);
     }
 
-    const now = new Date();
-    const newDoc = {
+    const newDoc = await Update.create({
       version: version.trim(),
       buildNumber: calculatedBuild,
       title: title ? title.trim() : `HanGo Version ${version.trim()}`,
@@ -247,17 +226,22 @@ async function createUpdate(req, res) {
         : null,
       platform: platform ? platform.trim().toLowerCase() : 'all',
       isActive: isActive !== undefined ? Boolean(isActive) : true,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    const result = await updatesCol.insertOne(newDoc);
+    });
 
     res.status(201).json({
       message: 'Update published successfully!',
       update: {
-        id: result.insertedId.toString(),
-        ...newDoc,
+        id: newDoc._id.toString(),
+        version: newDoc.version,
+        buildNumber: newDoc.buildNumber,
+        title: newDoc.title,
+        description: newDoc.description,
+        releaseNotes: newDoc.releaseNotes,
+        downloadUrl: newDoc.downloadUrl,
+        isMandatory: newDoc.isMandatory,
+        platform: newDoc.platform,
+        isActive: newDoc.isActive,
+        createdAt: newDoc.createdAt,
       },
     });
   } catch (error) {
@@ -273,24 +257,16 @@ async function createUpdate(req, res) {
 async function updateUpdate(req, res) {
   try {
     const { id } = req.params;
-    if (!ObjectId.isValid(id)) {
-      return res.status(400).json({ error: 'Invalid update ID.' });
-    }
-
-    const updatesCol = getUpdatesCollection();
-    const updateData = { ...req.body, updatedAt: new Date() };
+    const updateData = { ...req.body };
     delete updateData._id;
 
-    const result = await updatesCol.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: updateData }
-    );
+    const updated = await Update.findByIdAndUpdate(id, { $set: updateData }, { new: true });
 
-    if (result.matchedCount === 0) {
+    if (!updated) {
       return res.status(404).json({ error: 'Update not found.' });
     }
 
-    res.json({ message: 'Update record modified successfully!' });
+    res.json({ message: 'Update record modified successfully!', update: updated });
   } catch (error) {
     console.error('[UpdateUpdate Error]', error);
     res.status(500).json({ error: 'Failed to update record.' });
@@ -304,14 +280,9 @@ async function updateUpdate(req, res) {
 async function deleteUpdate(req, res) {
   try {
     const { id } = req.params;
-    if (!ObjectId.isValid(id)) {
-      return res.status(400).json({ error: 'Invalid update ID.' });
-    }
+    const deleted = await Update.findByIdAndDelete(id);
 
-    const updatesCol = getUpdatesCollection();
-    const result = await updatesCol.deleteOne({ _id: new ObjectId(id) });
-
-    if (result.deletedCount === 0) {
+    if (!deleted) {
       return res.status(404).json({ error: 'Update not found.' });
     }
 

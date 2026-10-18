@@ -1,4 +1,4 @@
-const { getBackupsCollection } = require('../db/connection');
+const { Backup, User } = require('../models');
 
 /**
  * POST /api/sync/backup
@@ -7,8 +7,17 @@ const { getBackupsCollection } = require('../db/connection');
 async function backup(req, res) {
   try {
     const userId = req.user.userId;
-    const { hsks, lessons, texts, sentences, words, characters, rules, junctions } =
-      req.body;
+    const {
+      hsks,
+      lessons,
+      texts,
+      sentences,
+      words,
+      characters,
+      rules,
+      junctions,
+      appVersion,
+    } = req.body;
 
     if (!hsks && !words && !sentences && !lessons) {
       return res.status(400).json({ error: 'No data provided in backup payload.' });
@@ -24,16 +33,22 @@ async function backup(req, res) {
       rulesCount: Array.isArray(rules) ? rules.length : 0,
     };
 
-    const backupsCol = getBackupsCollection();
     const now = new Date();
+    const version = (appVersion || req.headers['x-app-version'] || '').trim();
 
-    await backupsCol.updateOne(
+    // Update user's lastSyncAt and appVersion if provided
+    const userUpdate = { lastSyncAt: now };
+    if (version) userUpdate.appVersion = version;
+    await User.findByIdAndUpdate(userId, { $set: userUpdate }).catch(() => {});
+
+    // Save or update backup document
+    const backupDoc = await Backup.findOneAndUpdate(
       { userId },
       {
         $set: {
           userId,
           userEmail: req.user.email,
-          updatedAt: now,
+          appVersion: version || '1.0.0',
           stats,
           data: {
             hsks: hsks || [],
@@ -47,7 +62,7 @@ async function backup(req, res) {
           },
         },
       },
-      { upsert: true }
+      { upsert: true, new: true }
     );
 
     console.log(
@@ -57,7 +72,7 @@ async function backup(req, res) {
 
     res.json({
       message: 'Cloud backup saved successfully!',
-      updatedAt: now,
+      updatedAt: backupDoc.updatedAt || now,
       stats,
     });
   } catch (error) {
@@ -73,9 +88,7 @@ async function backup(req, res) {
 async function restore(req, res) {
   try {
     const userId = req.user.userId;
-    const backupsCol = getBackupsCollection();
-
-    const backupDoc = await backupsCol.findOne({ userId });
+    const backupDoc = await Backup.findOne({ userId });
 
     if (!backupDoc || !backupDoc.data) {
       return res.status(404).json({
@@ -103,12 +116,9 @@ async function restore(req, res) {
 async function getSyncStatus(req, res) {
   try {
     const userId = req.user.userId;
-    const backupsCol = getBackupsCollection();
-
-    const backupDoc = await backupsCol.findOne(
-      { userId },
-      { projection: { stats: 1, updatedAt: 1, userEmail: 1 } }
-    );
+    const backupDoc = await Backup.findOne({ userId })
+      .select('stats updatedAt userEmail appVersion')
+      .lean();
 
     if (!backupDoc) {
       return res.json({ hasBackup: false });
@@ -118,6 +128,7 @@ async function getSyncStatus(req, res) {
       hasBackup: true,
       updatedAt: backupDoc.updatedAt,
       stats: backupDoc.stats,
+      appVersion: backupDoc.appVersion,
     });
   } catch (error) {
     console.error('[Status error]', error);

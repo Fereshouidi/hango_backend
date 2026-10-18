@@ -5,21 +5,22 @@
  */
 
 require('dotenv').config();
-const { connectDB, getUpdatesCollection } = require('../db/connection');
+const { connectDB } = require('../db/connection');
+const { Update } = require('../models');
 
 async function main() {
   try {
     await connectDB();
-    const updatesCol = getUpdatesCollection();
 
     const sampleUpdate = {
       version: '1.0.1',
       buildNumber: 2,
       title: 'HanGo v1.0.1 Released!',
-      description: 'Major update with cloud sync and online updates!',
+      description: 'Major update with cloud sync, online updates, and database model enhancements!',
       releaseNotes: [
         'Cloud sync backup & restore directly on Vercel',
         'Automatic update detection when online',
+        'User model tracking of installed app version',
         'Improved study session performance and bug fixes',
       ],
       downloadUrl: 'https://github.com/Fereshouidi/hango/releases',
@@ -27,20 +28,18 @@ async function main() {
       minSupportedVersion: '1.0.0',
       platform: 'all',
       isActive: true,
-      createdAt: new Date(),
-      updatedAt: new Date(),
     };
 
-    // Upsert by version
-    await updatesCol.updateOne(
+    // Upsert by version using Mongoose Update model
+    const doc = await Update.findOneAndUpdate(
       { version: sampleUpdate.version },
       { $set: sampleUpdate },
-      { upsert: true }
+      { upsert: true, new: true, setDefaultsOnInsert: true }
     );
 
     console.log('\n==============================================');
     console.log('Update published successfully to MongoDB!');
-    console.log(JSON.stringify(sampleUpdate, null, 2));
+    console.log(JSON.stringify(doc, null, 2));
     console.log('==============================================\n');
 
     process.exit(0);

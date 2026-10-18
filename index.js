@@ -3,6 +3,10 @@ const config = require('./config');
 const { connectDB } = require('./db/connection');
 const { getLocalIPAddresses } = require('./utils/network');
 
+
+
+console.log(new Date());
+
 /**
  * Start server locally (only when executed directly with node)
  */
