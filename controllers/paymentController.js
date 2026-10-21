@@ -483,6 +483,184 @@ async function rejectPaymentAdmin(req, res) {
   }
 }
 
+/**
+ * GET /api/payments/admin/stats
+ * Admin: Get dashboard analytics, revenue, and counts
+ */
+async function getAdminStats(req, res) {
+  try {
+    const now = new Date();
+
+    const pendingCount = await Payment.countDocuments({ status: 'pending' });
+    const approvedCount = await Payment.countDocuments({ status: 'approved' });
+    const rejectedCount = await Payment.countDocuments({ status: 'rejected' });
+    const totalPayments = await Payment.countDocuments();
+
+    const approvedPayments = await Payment.find({ status: 'approved' });
+    let totalRevenueDT = 0;
+    let totalRevenueUSD = 0;
+
+    for (const p of approvedPayments) {
+      if (p.currency === '$' || p.method === 'payeer') {
+        totalRevenueUSD += Number(p.amount) || 0;
+      } else {
+        totalRevenueDT += Number(p.amount) || 0;
+      }
+    }
+
+    const activeSubscribers = await User.countDocuments({
+      isSubscribed: true,
+      subscriptionExpiresAt: { $gt: now },
+    });
+    const totalUsers = await User.countDocuments();
+
+    res.json({
+      pendingCount,
+      approvedCount,
+      rejectedCount,
+      totalPayments,
+      totalRevenueDT: Number(totalRevenueDT.toFixed(2)),
+      totalRevenueUSD: Number(totalRevenueUSD.toFixed(2)),
+      activeSubscribers,
+      totalUsers,
+      updatedAt: now.toISOString(),
+    });
+  } catch (error) {
+    console.error('[GetAdminStats Error]', error);
+    res.status(500).json({ error: 'Failed to retrieve admin stats.' });
+  }
+}
+
+/**
+ * GET /api/payments/admin/users
+ * Admin: List all users with subscription details
+ */
+async function getAdminUsers(req, res) {
+  try {
+    const { search } = req.query;
+    let query = {};
+    if (search && search.trim()) {
+      const term = search.trim();
+      query = {
+        $or: [
+          { email: { $regex: term, $options: 'i' } },
+          { username: { $regex: term, $options: 'i' } },
+        ],
+      };
+    }
+
+    const users = await User.find(query)
+      .select(
+        'email username isSubscribed subscriptionStatus subscriptionExpiresAt subscriptionPlan appVersion platform createdAt lastLoginAt'
+      )
+      .sort({ createdAt: -1 })
+      .limit(100);
+
+    res.json(users);
+  } catch (error) {
+    console.error('[GetAdminUsers Error]', error);
+    res.status(500).json({ error: 'Failed to retrieve users.' });
+  }
+}
+
+/**
+ * POST /api/payments/admin/users/:id/subscription
+ * Admin: Manually grant/extend or revoke a user's subscription
+ */
+async function updateUserSubscriptionAdmin(req, res) {
+  try {
+    const { id } = req.params;
+    const { action, durationMonths } = req.body; // action: 'grant' | 'revoke'
+
+    let user = null;
+    const mongoose = require('mongoose');
+    if (mongoose.Types.ObjectId.isValid(id)) {
+      user = await User.findById(id);
+    }
+    if (!user) {
+      user = await User.findOne({ email: id });
+    }
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    const now = new Date();
+
+    if (action === 'grant') {
+      const months = Number(durationMonths) || 1;
+      let baseDate = now;
+      if (
+        user.isSubscribed &&
+        user.subscriptionExpiresAt &&
+        user.subscriptionExpiresAt > now
+      ) {
+        baseDate = new Date(user.subscriptionExpiresAt);
+      }
+      const expiresAt = new Date(baseDate);
+      expiresAt.setDate(expiresAt.getDate() + months * 30);
+
+      user.isSubscribed = true;
+      user.subscriptionStatus = 'active';
+      user.subscriptionExpiresAt = expiresAt;
+      user.subscriptionPlan = `${months}_month_manual`;
+      await user.save();
+
+      return res.json({
+        message: `Subscription successfully granted until ${expiresAt.toLocaleDateString()}.`,
+        user: {
+          id: user._id,
+          email: user.email,
+          isSubscribed: user.isSubscribed,
+          subscriptionStatus: user.subscriptionStatus,
+          subscriptionExpiresAt: user.subscriptionExpiresAt,
+        },
+      });
+    } else if (action === 'revoke') {
+      user.isSubscribed = false;
+      user.subscriptionStatus = 'cancelled';
+      user.subscriptionExpiresAt = now;
+      await user.save();
+
+      return res.json({
+        message: `Subscription for ${user.email} has been revoked.`,
+        user: {
+          id: user._id,
+          email: user.email,
+          isSubscribed: user.isSubscribed,
+          subscriptionStatus: user.subscriptionStatus,
+          subscriptionExpiresAt: user.subscriptionExpiresAt,
+        },
+      });
+    } else {
+      return res
+        .status(400)
+        .json({ error: 'Invalid action. Choose "grant" or "revoke".' });
+    }
+  } catch (error) {
+    console.error('[UpdateUserSubscriptionAdmin Error]', error);
+    res.status(500).json({ error: 'Failed to update user subscription.' });
+  }
+}
+
+/**
+ * DELETE /api/payments/admin/:id
+ * Admin: Delete a payment record
+ */
+async function deletePaymentAdmin(req, res) {
+  try {
+    const { id } = req.params;
+    const payment = await Payment.findByIdAndDelete(id);
+    if (!payment) {
+      return res.status(404).json({ error: 'Payment record not found.' });
+    }
+    res.json({ message: 'Payment record deleted.', paymentId: id });
+  } catch (error) {
+    console.error('[DeletePaymentAdmin Error]', error);
+    res.status(500).json({ error: 'Failed to delete payment.' });
+  }
+}
+
 module.exports = {
   getPlansAndMethods,
   updatePaymentSettings,
@@ -492,4 +670,8 @@ module.exports = {
   getAllPaymentsAdmin,
   approvePaymentAdmin,
   rejectPaymentAdmin,
+  getAdminStats,
+  getAdminUsers,
+  updateUserSubscriptionAdmin,
+  deletePaymentAdmin,
 };

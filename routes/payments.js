@@ -9,6 +9,10 @@ const {
   getAllPaymentsAdmin,
   approvePaymentAdmin,
   rejectPaymentAdmin,
+  getAdminStats,
+  getAdminUsers,
+  updateUserSubscriptionAdmin,
+  deletePaymentAdmin,
 } = require('../controllers/paymentController');
 const config = require('../config');
 
@@ -47,16 +51,32 @@ router.get('/history', requireAuth, getUserPaymentHistory);
 // ──────────────────────────────────────────────
 // Admin endpoints (protected by x-admin-key)
 // ──────────────────────────────────────────────
-// GET  /api/payments/admin/all             – list all payments
+// GET  /api/payments/admin/stats            – dashboard analytics and revenue
+router.get('/admin/stats', requireAdminKey, getAdminStats);
+
+// GET  /api/payments/admin/all              – list all payments
 router.get('/admin/all', requireAdminKey, getAllPaymentsAdmin);
 
-// POST /api/payments/admin/:id/approve    – approve a payment
+// POST /api/payments/admin/:id/approve     – approve a payment
 router.post('/admin/:id/approve', requireAdminKey, approvePaymentAdmin);
 
-// POST /api/payments/admin/:id/reject     – reject a payment
+// POST /api/payments/admin/:id/reject      – reject a payment
 router.post('/admin/:id/reject', requireAdminKey, rejectPaymentAdmin);
 
-// PUT  /api/payments/settings             – update recipient numbers / plans
+// DELETE /api/payments/admin/:id           – delete a payment
+router.delete('/admin/:id', requireAdminKey, deletePaymentAdmin);
+
+// GET  /api/payments/admin/users            – list all users
+router.get('/admin/users', requireAdminKey, getAdminUsers);
+
+// POST /api/payments/admin/users/:id/subscription – grant/revoke user subscription
+router.post(
+  '/admin/users/:id/subscription',
+  requireAdminKey,
+  updateUserSubscriptionAdmin
+);
+
+// PUT  /api/payments/settings              – update recipient numbers / plans
 router.put('/settings', requireAdminKey, updatePaymentSettings);
 
 module.exports = router;
