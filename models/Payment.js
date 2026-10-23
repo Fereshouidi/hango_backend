@@ -26,7 +26,7 @@ const paymentSchema = new mongoose.Schema(
     durationMonths: {
       type: Number,
       required: true,
-      enum: [1, 2, 3, 6, 12],
+      min: 1,
     },
     amount: {
       type: Number,
@@ -54,7 +54,7 @@ const paymentSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['pending', 'approved', 'rejected'],
+      enum: ['pending', 'approved', 'rejected', 'cancelled'],
       default: 'pending',
       index: true,
     },
