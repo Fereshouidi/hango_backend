@@ -202,15 +202,11 @@ async function submitPayment(req, res) {
  * GET /api/payments/status
  * Get the current user's active subscription status and any pending payment.
  *
- * Priority order (most authoritative → least):
- *  1. Latest APPROVED payment  → user is subscribed (until expiry)
- *  2. User document flagged as cancelled/expired → revoke subscription
- *  3. Latest REJECTED/CANCELLED payment → revoke subscription
- *  4. User document manually set isSubscribed:true → honour it
- *  5. Default → not subscribed
- *
- * A PENDING payment does NOT affect subscription state — it is only surfaced
- * separately so the UI can show "under review" messaging.
+ * Priority order:
+ *  1. User explicitly revoked/cancelled by admin → NOT subscribed
+ *  2. User has active subscriptionExpiresAt > now (honours manual admin grants & extensions) → SUBSCRIBED
+ *  3. Latest APPROVED payment has not expired → SUBSCRIBED
+ *  4. Default → NOT subscribed / expired
  */
 async function getUserSubscriptionStatus(req, res) {
   try {
@@ -223,9 +219,6 @@ async function getUserSubscriptionStatus(req, res) {
 
     const now = new Date();
 
-    // Fetch the most-recently-updated payment that is NOT pending.
-    // This prevents a fresh pending submission from shadowing a previously
-    // approved (or cancelled) payment record.
     const latestActionedPayment = await Payment.findOne({
       userId,
       status: { $in: ['approved', 'rejected', 'cancelled'] },
@@ -233,8 +226,27 @@ async function getUserSubscriptionStatus(req, res) {
 
     let isSubscribed = false;
 
-    // ── PRIORITY 1: Most recent approved payment ──────────────────────────
-    if (latestActionedPayment && latestActionedPayment.status === 'approved') {
+    // ── 1. If user is explicitly cancelled/revoked by admin, NEVER resurrect via old payment ──
+    if (
+      user.subscriptionStatus === 'cancelled' ||
+      user.subscriptionStatus === 'canceled'
+    ) {
+      isSubscribed = false;
+      user.isSubscribed = false;
+      await user.save();
+    }
+    // ── 2. If user has active subscriptionExpiresAt in future (admin grant or extension) ────
+    else if (
+      user.isSubscribed &&
+      user.subscriptionExpiresAt &&
+      new Date(user.subscriptionExpiresAt) > now
+    ) {
+      isSubscribed = true;
+      user.subscriptionStatus = 'active';
+      await user.save();
+    }
+    // ── 3. Check latest approved payment ───────────────────────────────────────────────────
+    else if (latestActionedPayment && latestActionedPayment.status === 'approved') {
       const baseDate =
         latestActionedPayment.subscriptionStartedAt ||
         latestActionedPayment.reviewedAt ||
@@ -257,61 +269,37 @@ async function getUserSubscriptionStatus(req, res) {
         isSubscribed = true;
         user.isSubscribed = true;
         user.subscriptionStatus = 'active';
-        user.subscriptionExpiresAt = expiresAt;
+        if (
+          !user.subscriptionExpiresAt ||
+          new Date(user.subscriptionExpiresAt) < new Date(expiresAt)
+        ) {
+          user.subscriptionExpiresAt = expiresAt;
+        }
         user.subscriptionPlan = `${latestActionedPayment.durationMonths || 1}_month`;
         await user.save();
       } else {
-        // Subscription window has elapsed
-        isSubscribed = false;
-        user.isSubscribed = false;
-        user.subscriptionStatus = 'expired';
-        user.subscriptionExpiresAt = expiresAt; // keep for display
-        await user.save();
-      }
-    }
-    // ── PRIORITY 2: Admin cancelled/rejected the payment ──────────────────
-    else if (
-      latestActionedPayment &&
-      (latestActionedPayment.status === 'rejected' ||
-        latestActionedPayment.status === 'cancelled')
-    ) {
-      isSubscribed = false;
-      user.isSubscribed = false;
-      user.subscriptionStatus = latestActionedPayment.status;
-      user.subscriptionExpiresAt = null;
-      await user.save();
-    }
-    // ── PRIORITY 3: User document explicitly not subscribed ───────────────
-    else if (
-      user.subscriptionStatus === 'cancelled' ||
-      user.subscriptionStatus === 'expired'
-    ) {
-      isSubscribed = false;
-      user.isSubscribed = false;
-      await user.save();
-    }
-    // ── PRIORITY 4: Admin directly set isSubscribed:true on user doc ──────
-    else if (user.isSubscribed === true) {
-      if (!user.subscriptionExpiresAt) {
-        const defaultExp = new Date();
-        defaultExp.setDate(defaultExp.getDate() + 30);
-        user.subscriptionExpiresAt = defaultExp;
-        await user.save();
-      }
-
-      if (new Date(user.subscriptionExpiresAt) > now) {
-        isSubscribed = true;
-        user.subscriptionStatus = 'active';
-        await user.save();
-      } else {
         isSubscribed = false;
         user.isSubscribed = false;
         user.subscriptionStatus = 'expired';
         await user.save();
       }
-    } else {
-      // ── DEFAULT: not subscribed ─────────────────────────────────────────
+    }
+    // ── 4. Fallback: Not subscribed or expired ─────────────────────────────────────────────
+    else {
       isSubscribed = false;
+      user.isSubscribed = false;
+      if (
+        user.subscriptionExpiresAt &&
+        new Date(user.subscriptionExpiresAt) <= now
+      ) {
+        user.subscriptionStatus = 'expired';
+      } else if (
+        !user.subscriptionStatus ||
+        user.subscriptionStatus === 'active'
+      ) {
+        user.subscriptionStatus = 'none';
+      }
+      await user.save();
     }
 
     // Always separately surface any pending (under-review) payment
@@ -593,7 +581,7 @@ async function updateUserSubscriptionAdmin(req, res) {
       if (
         user.isSubscribed &&
         user.subscriptionExpiresAt &&
-        user.subscriptionExpiresAt > now
+        new Date(user.subscriptionExpiresAt) > now
       ) {
         baseDate = new Date(user.subscriptionExpiresAt);
       }
@@ -605,6 +593,36 @@ async function updateUserSubscriptionAdmin(req, res) {
       user.subscriptionExpiresAt = expiresAt;
       user.subscriptionPlan = `${months}_month_manual`;
       await user.save();
+
+      // Synchronize Payment collection so payment history and status checks align
+      const latestApproved = await Payment.findOne({
+        userId: user._id,
+        status: 'approved',
+      }).sort({ updatedAt: -1, createdAt: -1 });
+
+      if (latestApproved) {
+        latestApproved.subscriptionExpiresAt = expiresAt;
+        latestApproved.durationMonths = (latestApproved.durationMonths || 0) + months;
+        latestApproved.notes = `${latestApproved.notes || ''} | Extended by ${months} mo by admin`.trim();
+        await latestApproved.save();
+      } else {
+        await Payment.create({
+          userId: user._id,
+          userEmail: user.email,
+          username: user.username,
+          method: 'd17',
+          durationMonths: months,
+          amount: 0,
+          currency: 'DT',
+          recipientAccount: 'Admin Manual Grant',
+          senderReference: `ADMIN-GRANT-${Date.now()}`,
+          notes: `Manually granted by admin for ${months} month(s)`,
+          status: 'approved',
+          reviewedAt: now,
+          subscriptionStartedAt: baseDate,
+          subscriptionExpiresAt: expiresAt,
+        });
+      }
 
       return res.json({
         message: `Subscription successfully granted until ${expiresAt.toLocaleDateString()}.`,
@@ -621,6 +639,18 @@ async function updateUserSubscriptionAdmin(req, res) {
       user.subscriptionStatus = 'cancelled';
       user.subscriptionExpiresAt = now;
       await user.save();
+
+      // Cancel ALL approved and pending payments for this user so they cannot resurrect the subscription!
+      await Payment.updateMany(
+        { userId: user._id, status: { $in: ['approved', 'pending'] } },
+        {
+          $set: {
+            status: 'cancelled',
+            subscriptionExpiresAt: now,
+            rejectionReason: 'Revoked by admin',
+          },
+        }
+      );
 
       return res.json({
         message: `Subscription for ${user.email} has been revoked.`,
