@@ -308,6 +308,12 @@ async function getUserSubscriptionStatus(req, res) {
       status: 'pending',
     }).sort({ createdAt: -1 });
 
+    // Surface the most-recent rejected payment so the user can see the reason
+    const latestRejectedPayment = await Payment.findOne({
+      userId,
+      status: 'rejected',
+    }).sort({ reviewedAt: -1, updatedAt: -1 });
+
     let daysRemaining = 0;
     if (isSubscribed && user.subscriptionExpiresAt) {
       const diffMs =
@@ -324,6 +330,19 @@ async function getUserSubscriptionStatus(req, res) {
       daysRemaining,
       hasPendingPayment: Boolean(pendingPayment),
       pendingPayment: pendingPayment || null,
+      latestRejectedPayment: latestRejectedPayment
+        ? {
+            _id: latestRejectedPayment._id,
+            method: latestRejectedPayment.method,
+            durationMonths: latestRejectedPayment.durationMonths,
+            amount: latestRejectedPayment.amount,
+            currency: latestRejectedPayment.currency,
+            status: 'rejected',
+            rejectionReason: latestRejectedPayment.rejectionReason || null,
+            reviewedAt: latestRejectedPayment.reviewedAt,
+            createdAt: latestRejectedPayment.createdAt,
+          }
+        : null,
     });
   } catch (error) {
     console.error('[GetUserSubscriptionStatus Error]', error);
