@@ -1,7 +1,7 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const config = require('../config');
-const { User, Backup } = require('../models');
+const { User, Backup, Payment } = require('../models');
 
 /**
  * POST /api/auth/register
@@ -39,16 +39,48 @@ async function register(req, res) {
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
 
+    // ── Free trial: 1 month from registration date ────────────────
+    const now = new Date();
+    const trialExpiresAt = new Date(now);
+    trialExpiresAt.setDate(trialExpiresAt.getDate() + 30);
+
     const newUser = await User.create({
       email,
       username,
       passwordHash,
       appVersion: version,
       platform: platform || 'unknown',
-      lastLoginAt: new Date(),
+      lastLoginAt: now,
+      // Grant 1-month free trial immediately on signup
+      isSubscribed: true,
+      subscriptionStatus: 'active',
+      subscriptionExpiresAt: trialExpiresAt,
+      subscriptionPlan: '1_month_free_trial',
     });
 
     const userId = newUser._id.toString();
+
+    // Create a synthetic approved Payment record so the trial appears in
+    // payment history and all subscription-status checks remain consistent.
+    await Payment.create({
+      userId: newUser._id,
+      userEmail: email,
+      username,
+      method: 'd17',
+      durationMonths: 1,
+      amount: 0,
+      currency: 'DT',
+      recipientAccount: 'Free Trial',
+      senderReference: `FREE-TRIAL-${userId}`,
+      notes: '1-month free trial granted automatically on registration',
+      status: 'approved',
+      reviewedAt: now,
+      reviewedBy: 'system',
+      subscriptionStartedAt: now,
+      subscriptionExpiresAt: trialExpiresAt,
+    });
+
+    console.log(`[Register] New user ${email} — free trial active until ${trialExpiresAt.toISOString()}`);
 
     // Generate JWT
     const token = jwt.sign(
@@ -60,6 +92,8 @@ async function register(req, res) {
     res.status(201).json({
       message: 'Account created successfully!',
       token,
+      trialGranted: true,
+      trialExpiresAt,
       user: {
         id: userId,
         email: newUser.email,
@@ -109,6 +143,47 @@ async function login(req, res) {
       user.platform = platform;
     }
     user.lastLoginAt = new Date();
+
+    // If account has never had a subscription or payment, grant 1-month free trial
+    if (
+      !user.isSubscribed &&
+      !user.subscriptionExpiresAt &&
+      user.subscriptionStatus !== 'cancelled' &&
+      user.subscriptionStatus !== 'expired'
+    ) {
+      const existingPayment = await Payment.findOne({ userId: user._id });
+      if (!existingPayment) {
+        const now = new Date();
+        const trialExpiresAt = new Date(now);
+        trialExpiresAt.setDate(trialExpiresAt.getDate() + 30);
+
+        user.isSubscribed = true;
+        user.subscriptionStatus = 'active';
+        user.subscriptionExpiresAt = trialExpiresAt;
+        user.subscriptionPlan = '1_month_free_trial';
+
+        await Payment.create({
+          userId: user._id,
+          userEmail: user.email,
+          username: user.username,
+          method: 'd17',
+          durationMonths: 1,
+          amount: 0,
+          currency: 'DT',
+          recipientAccount: 'Free Trial',
+          senderReference: `FREE-TRIAL-${user._id.toString()}`,
+          notes: '1-month free trial granted on login',
+          status: 'approved',
+          reviewedAt: now,
+          reviewedBy: 'system',
+          subscriptionStartedAt: now,
+          subscriptionExpiresAt: trialExpiresAt,
+        });
+
+        console.log(`[Login] Retroactively granted free trial to ${user.email} until ${trialExpiresAt.toISOString()}`);
+      }
+    }
+
     await user.save();
 
     const userId = user._id.toString();
