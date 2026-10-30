@@ -70,6 +70,48 @@ const paymentSettingSchema = new mongoose.Schema(
         default: true,
       },
     },
+    // USDT Recipient Details
+    usdt: {
+      accountNumber: {
+        type: String,
+        default: 'TXYZ1234567890abcdef',
+        trim: true,
+      },
+      accountName: {
+        type: String,
+        default: 'HanGo USDT',
+      },
+      instructions: {
+        type: String,
+        default:
+          '1. Open your crypto wallet (Trust Wallet, Binance, etc.).\n2. Send exactly ${amount} USDT to wallet address: {accountNumber}.\n3. Copy the Transaction Hash (TXID).\n4. Enter your TXID below and tap Continue.',
+      },
+      isEnabled: {
+        type: Boolean,
+        default: true,
+      },
+    },
+    // Binance Recipient Details
+    binance: {
+      accountNumber: {
+        type: String,
+        default: '105847392',
+        trim: true,
+      },
+      accountName: {
+        type: String,
+        default: 'HanGo Binance Pay',
+      },
+      instructions: {
+        type: String,
+        default:
+          '1. Open your Binance app or website.\n2. Go to Binance Pay / Send.\n3. Send exactly ${amount} USD to Binance Pay ID: {accountNumber}.\n4. Enter your Binance Pay ID / Order ID below and tap Continue.',
+      },
+      isEnabled: {
+        type: Boolean,
+        default: true,
+      },
+    },
     // Subscription Plans & Discount pricing
     plans: [
       {
@@ -81,6 +123,8 @@ const paymentSettingSchema = new mongoose.Schema(
           d17: { type: Number, required: true },
           ooredoo: { type: Number, required: true },
           payeer: { type: Number, required: true },
+          usdt: { type: Number },
+          binance: { type: Number },
         },
       },
     ],

@@ -28,8 +28,43 @@ async function getPaymentSettingsDoc() {
         instructions: config.PAYMENT_CONFIG.payeer.instructions,
         isEnabled: true,
       },
+      usdt: {
+        accountNumber: config.PAYMENT_CONFIG.usdt?.accountNumber || 'TXYZ1234567890abcdef',
+        accountName: 'HanGo USDT',
+        instructions: config.PAYMENT_CONFIG.usdt?.instructions,
+        isEnabled: true,
+      },
+      binance: {
+        accountNumber: config.PAYMENT_CONFIG.binance?.accountNumber || '105847392',
+        accountName: 'HanGo Binance Pay',
+        instructions: config.PAYMENT_CONFIG.binance?.instructions,
+        isEnabled: true,
+      },
       plans: config.SUBSCRIPTION_PLANS,
     });
+  } else {
+    let needsSave = false;
+    if (!settings.usdt) {
+      settings.usdt = {
+        accountNumber: config.PAYMENT_CONFIG.usdt?.accountNumber || 'TXYZ1234567890abcdef',
+        accountName: 'HanGo USDT',
+        instructions: config.PAYMENT_CONFIG.usdt?.instructions,
+        isEnabled: true,
+      };
+      needsSave = true;
+    }
+    if (!settings.binance) {
+      settings.binance = {
+        accountNumber: config.PAYMENT_CONFIG.binance?.accountNumber || '105847392',
+        accountName: 'HanGo Binance Pay',
+        instructions: config.PAYMENT_CONFIG.binance?.instructions,
+        isEnabled: true,
+      };
+      needsSave = true;
+    }
+    if (needsSave) {
+      await settings.save().catch(() => {});
+    }
   }
 
   return settings;
@@ -48,6 +83,8 @@ async function getPlansAndMethods(req, res) {
         d17: settings.d17,
         ooredoo: settings.ooredoo,
         payeer: settings.payeer,
+        usdt: settings.usdt,
+        binance: settings.binance,
       },
       plans: settings.plans,
       updatedAt: settings.updatedAt,
@@ -64,7 +101,7 @@ async function getPlansAndMethods(req, res) {
  */
 async function updatePaymentSettings(req, res) {
   try {
-    const { d17, ooredoo, payeer, plans } = req.body;
+    const { d17, ooredoo, payeer, usdt, binance, plans } = req.body;
     const settings = await getPaymentSettingsDoc();
 
     if (d17) {
@@ -72,6 +109,7 @@ async function updatePaymentSettings(req, res) {
       if (d17.accountName !== undefined) settings.d17.accountName = d17.accountName;
       if (d17.instructions !== undefined) settings.d17.instructions = d17.instructions;
       if (d17.isEnabled !== undefined) settings.d17.isEnabled = Boolean(d17.isEnabled);
+      settings.markModified('d17');
     }
 
     if (ooredoo) {
@@ -79,6 +117,7 @@ async function updatePaymentSettings(req, res) {
       if (ooredoo.accountName !== undefined) settings.ooredoo.accountName = ooredoo.accountName;
       if (ooredoo.instructions !== undefined) settings.ooredoo.instructions = ooredoo.instructions;
       if (ooredoo.isEnabled !== undefined) settings.ooredoo.isEnabled = Boolean(ooredoo.isEnabled);
+      settings.markModified('ooredoo');
     }
 
     if (payeer) {
@@ -86,10 +125,30 @@ async function updatePaymentSettings(req, res) {
       if (payeer.accountName !== undefined) settings.payeer.accountName = payeer.accountName;
       if (payeer.instructions !== undefined) settings.payeer.instructions = payeer.instructions;
       if (payeer.isEnabled !== undefined) settings.payeer.isEnabled = Boolean(payeer.isEnabled);
+      settings.markModified('payeer');
+    }
+
+    if (usdt) {
+      if (!settings.usdt) settings.usdt = {};
+      if (usdt.accountNumber !== undefined) settings.usdt.accountNumber = String(usdt.accountNumber).trim();
+      if (usdt.accountName !== undefined) settings.usdt.accountName = usdt.accountName;
+      if (usdt.instructions !== undefined) settings.usdt.instructions = usdt.instructions;
+      if (usdt.isEnabled !== undefined) settings.usdt.isEnabled = Boolean(usdt.isEnabled);
+      settings.markModified('usdt');
+    }
+
+    if (binance) {
+      if (!settings.binance) settings.binance = {};
+      if (binance.accountNumber !== undefined) settings.binance.accountNumber = String(binance.accountNumber).trim();
+      if (binance.accountName !== undefined) settings.binance.accountName = binance.accountName;
+      if (binance.instructions !== undefined) settings.binance.instructions = binance.instructions;
+      if (binance.isEnabled !== undefined) settings.binance.isEnabled = Boolean(binance.isEnabled);
+      settings.markModified('binance');
     }
 
     if (Array.isArray(plans) && plans.length > 0) {
       settings.plans = plans;
+      settings.markModified('plans');
     }
 
     await settings.save();
@@ -100,6 +159,8 @@ async function updatePaymentSettings(req, res) {
         d17: settings.d17,
         ooredoo: settings.ooredoo,
         payeer: settings.payeer,
+        usdt: settings.usdt,
+        binance: settings.binance,
         plans: settings.plans,
       },
     });
@@ -125,9 +186,9 @@ async function submitPayment(req, res) {
     }
 
     const cleanMethod = method.toLowerCase().trim();
-    if (!['d17', 'ooredoo', 'payeer'].includes(cleanMethod)) {
+    if (!['d17', 'ooredoo', 'payeer', 'usdt', 'binance'].includes(cleanMethod)) {
       return res.status(400).json({
-        error: 'Invalid payment method. Choose "d17", "ooredoo", or "payeer".',
+        error: 'Invalid payment method. Choose "d17", "ooredoo", "payeer", "usdt", or "binance".',
       });
     }
 
@@ -150,8 +211,9 @@ async function submitPayment(req, res) {
       });
     }
 
-    const price = plan.prices[cleanMethod];
-    const currency = cleanMethod === 'payeer' ? '$' : 'DT';
+    const isUsdMethod = ['payeer', 'usdt', 'binance'].includes(cleanMethod);
+    const price = plan.prices[cleanMethod] ?? (isUsdMethod ? (plan.prices.usdt ?? plan.prices.payeer) : plan.prices.d17);
+    const currency = isUsdMethod ? '$' : 'DT';
 
     // Prevent duplicate pending requests with the exact same reference
     const existingPending = await Payment.findOne({
@@ -508,7 +570,7 @@ async function getAdminStats(req, res) {
     let totalRevenueUSD = 0;
 
     for (const p of approvedPayments) {
-      if (p.currency === '$' || p.method === 'payeer') {
+      if (p.currency === '$' || ['payeer', 'usdt', 'binance'].includes(p.method)) {
         totalRevenueUSD += Number(p.amount) || 0;
       } else {
         totalRevenueDT += Number(p.amount) || 0;

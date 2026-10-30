@@ -36,6 +36,22 @@ module.exports = {
       instructions:
         '1. Open your Payeer wallet or app.\n2. Transfer exactly ${amount} USD to Payeer account: {accountNumber}.\n3. Copy the Batch / Transaction Operation ID.\n4. Enter your Payeer account and Transaction ID below and tap Continue.',
     },
+    usdt: {
+      id: 'usdt',
+      name: 'USDT (Tether)',
+      currency: '$',
+      accountNumber: process.env.PAYMENT_USDT_ADDRESS || 'TXYZ1234567890abcdef',
+      instructions:
+        '1. Open your crypto wallet (Trust Wallet, Binance, etc.).\n2. Send exactly ${amount} USDT to wallet: {accountNumber}.\n3. Copy the Transaction Hash (TXID).\n4. Enter your TXID below and tap Continue.',
+    },
+    binance: {
+      id: 'binance',
+      name: 'Binance (Binance Pay / Crypto)',
+      currency: '$',
+      accountNumber: process.env.PAYMENT_BINANCE_ID || '105847392',
+      instructions:
+        '1. Open your Binance app or website.\n2. Go to Binance Pay / Send.\n3. Send exactly ${amount} USD to Binance Pay ID: {accountNumber}.\n4. Enter your Binance Pay ID / Order ID below and tap Continue.',
+    },
   },
 
   // Subscription Plans
@@ -49,6 +65,8 @@ module.exports = {
         d17: 4.5,
         ooredoo: 4.5,
         payeer: 1.5,
+        usdt: 1.5,
+        binance: 1.5,
       },
     },
     {
@@ -60,6 +78,8 @@ module.exports = {
         d17: 8.0,
         ooredoo: 8.0,
         payeer: 2.7,
+        usdt: 2.7,
+        binance: 2.7,
       },
     },
     {
@@ -71,6 +91,8 @@ module.exports = {
         d17: 11.0,
         ooredoo: 11.0,
         payeer: 3.7,
+        usdt: 3.7,
+        binance: 3.7,
       },
     },
   ],
