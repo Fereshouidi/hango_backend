@@ -130,6 +130,12 @@ async function login(req, res) {
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
 
+    if (!user.passwordHash) {
+      return res.status(401).json({
+        error: 'This account uses Google sign-in. Please continue with Google.',
+      });
+    }
+
     const isMatch = await bcrypt.compare(password, user.passwordHash);
     if (!isMatch) {
       return res.status(401).json({ error: 'Invalid email or password.' });
@@ -214,6 +220,154 @@ async function login(req, res) {
   }
 }
 
+function signUserToken(user) {
+  const userId = user._id.toString();
+  const token = jwt.sign(
+    { userId, email: user.email, username: user.username },
+    config.JWT_SECRET,
+    { expiresIn: config.JWT_EXPIRES_IN || '30d' }
+  );
+  return {
+    token,
+    user: {
+      id: userId,
+      email: user.email,
+      username: user.username,
+      appVersion: user.appVersion,
+    },
+  };
+}
+
+function sanitizeUsername(raw) {
+  const cleaned = String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '')
+    .slice(0, 24);
+  return cleaned || 'user';
+}
+
+async function uniqueUsername(base) {
+  let candidate = sanitizeUsername(base);
+  let suffix = 0;
+  while (await User.findOne({ username: candidate })) {
+    suffix += 1;
+    candidate = `${sanitizeUsername(base).slice(0, 20)}${suffix}`;
+  }
+  return candidate;
+}
+
+async function fetchGoogleProfile(accessToken) {
+  const googleRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!googleRes.ok) {
+    return null;
+  }
+
+  return googleRes.json();
+}
+
+/**
+ * POST /api/auth/google
+ * Sign in or create an account using a Google OAuth access token
+ */
+async function googleLogin(req, res) {
+  try {
+    const { accessToken, appVersion, platform } = req.body;
+    const version = (appVersion || req.headers['x-app-version'] || '1.0.0').trim();
+
+    if (!accessToken) {
+      return res.status(400).json({ error: 'Google access token is required.' });
+    }
+
+    const profile = await fetchGoogleProfile(accessToken);
+    if (!profile) {
+      return res.status(401).json({ error: 'Invalid or expired Google sign-in. Please try again.' });
+    }
+
+    const emailVerified = profile.email_verified === true || profile.email_verified === 'true';
+    const email = typeof profile.email === 'string' ? profile.email.trim().toLowerCase() : '';
+    const googleId = profile.sub ? String(profile.sub) : '';
+
+    if (!googleId || !email || !emailVerified) {
+      return res.status(400).json({
+        error: 'Google did not provide a verified email address. Please use another account.',
+      });
+    }
+
+    let user = await User.findOne({ googleId });
+    let created = false;
+
+    if (!user) {
+      user = await User.findOne({ email });
+      if (user) {
+        user.googleId = googleId;
+      } else {
+        const username = await uniqueUsername(profile.name || profile.given_name || email.split('@')[0]);
+        const now = new Date();
+        const trialExpiresAt = new Date(now);
+        trialExpiresAt.setDate(trialExpiresAt.getDate() + 30);
+
+        user = await User.create({
+          email,
+          username,
+          googleId,
+          appVersion: version,
+          platform: platform || 'unknown',
+          lastLoginAt: now,
+          isSubscribed: true,
+          subscriptionStatus: 'active',
+          subscriptionExpiresAt: trialExpiresAt,
+          subscriptionPlan: '1_month_free_trial',
+        });
+
+        await Payment.create({
+          userId: user._id,
+          userEmail: email,
+          username,
+          method: 'd17',
+          durationMonths: 1,
+          amount: 0,
+          currency: 'DT',
+          recipientAccount: 'Free Trial',
+          senderReference: `FREE-TRIAL-${user._id.toString()}`,
+          notes: '1-month free trial granted automatically on Google registration',
+          status: 'approved',
+          reviewedAt: now,
+          reviewedBy: 'system',
+          subscriptionStartedAt: now,
+          subscriptionExpiresAt: trialExpiresAt,
+        });
+
+        created = true;
+        console.log(
+          `[Google] New user ${email} — free trial active until ${trialExpiresAt.toISOString()}`
+        );
+      }
+    }
+
+    if (version) {
+      user.appVersion = version;
+    }
+    if (platform) {
+      user.platform = platform;
+    }
+    user.lastLoginAt = new Date();
+    await user.save();
+
+    const payload = signUserToken(user);
+    res.status(created ? 201 : 200).json({
+      message: created ? 'Account created successfully!' : 'Login successful!',
+      ...payload,
+    });
+  } catch (error) {
+    console.error('[Google login error]', error);
+    res.status(500).json({ error: 'Internal server error during Google sign-in.' });
+  }
+}
+
 /**
  * GET /api/auth/me
  * Get current authenticated user profile & last backup status
@@ -288,6 +442,7 @@ async function updateAppVersion(req, res) {
 module.exports = {
   register,
   login,
+  googleLogin,
   getProfile,
   updateAppVersion,
 };

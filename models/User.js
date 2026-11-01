@@ -15,9 +15,15 @@ const userSchema = new mongoose.Schema(
       sparse: true,
       trim: true,
     },
+    googleId: {
+      type: String,
+      unique: true,
+      sparse: true,
+      trim: true,
+    },
     passwordHash: {
       type: String,
-      required: true,
+      required: false,
     },
     // The current version of the app the user is using
     appVersion: {
