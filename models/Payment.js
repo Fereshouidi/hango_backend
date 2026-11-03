@@ -20,7 +20,7 @@ const paymentSchema = new mongoose.Schema(
     },
     method: {
       type: String,
-      enum: ['d17', 'ooredoo', 'payeer', 'usdt', 'binance'],
+      enum: ['d17', 'ooredoo', 'flousi', 'payeer', 'usdt', 'binance'],
       required: true,
     },
     durationMonths: {

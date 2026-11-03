@@ -49,6 +49,27 @@ const paymentSettingSchema = new mongoose.Schema(
         default: true,
       },
     },
+    // Flousi Recipient Details
+    flousi: {
+      accountNumber: {
+        type: String,
+        default: '29845347',
+        trim: true,
+      },
+      accountName: {
+        type: String,
+        default: 'HanGo Flousi',
+      },
+      instructions: {
+        type: String,
+        default:
+          '1. Open your Flousi app.\n2. Choose "Envoyer de l\'argent" / "إرسال أموال".\n3. Send the exact amount to phone number: {accountNumber}.\n4. Enter your sender phone number below and tap Continue.',
+      },
+      isEnabled: {
+        type: Boolean,
+        default: true,
+      },
+    },
     // Payeer Recipient Details
     payeer: {
       accountNumber: {
@@ -122,6 +143,7 @@ const paymentSettingSchema = new mongoose.Schema(
         prices: {
           d17: { type: Number, required: true },
           ooredoo: { type: Number, required: true },
+          flousi: { type: Number },
           payeer: { type: Number, required: true },
           usdt: { type: Number },
           binance: { type: Number },

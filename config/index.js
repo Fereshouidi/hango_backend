@@ -28,6 +28,14 @@ module.exports = {
       instructions:
         '1. Dial *120*{accountNumber}*{amount}# from your Ooredoo phone to transfer balance, OR send a recharge voucher.\n2. Once transferred, enter your phone number below and tap Continue.',
     },
+    flousi: {
+      id: 'flousi',
+      name: 'Flousi (Tunisian Digital Wallet)',
+      currency: 'DT',
+      accountNumber: process.env.PAYMENT_FLOUSI_NUMBER || '29845347',
+      instructions:
+        '1. Open your Flousi app.\n2. Choose "Envoyer de l\'argent" / "إرسال أموال".\n3. Send the exact amount to phone number: {accountNumber}.\n4. Enter your sender phone number below and tap Continue.',
+    },
     payeer: {
       id: 'payeer',
       name: 'Payeer (USD)',
@@ -64,6 +72,7 @@ module.exports = {
       prices: {
         d17: 4.5,
         ooredoo: 4.5,
+        flousi: 4.5,
         payeer: 1.5,
         usdt: 1.5,
         binance: 1.5,
@@ -77,6 +86,7 @@ module.exports = {
       prices: {
         d17: 8.0,
         ooredoo: 8.0,
+        flousi: 8.0,
         payeer: 2.7,
         usdt: 2.7,
         binance: 2.7,
@@ -90,6 +100,7 @@ module.exports = {
       prices: {
         d17: 11.0,
         ooredoo: 11.0,
+        flousi: 11.0,
         payeer: 3.7,
         usdt: 3.7,
         binance: 3.7,

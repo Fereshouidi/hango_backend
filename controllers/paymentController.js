@@ -22,6 +22,12 @@ async function getPaymentSettingsDoc() {
         instructions: config.PAYMENT_CONFIG.ooredoo.instructions,
         isEnabled: true,
       },
+      flousi: {
+        accountNumber: config.PAYMENT_CONFIG.flousi?.accountNumber || '29845347',
+        accountName: 'HanGo Flousi',
+        instructions: config.PAYMENT_CONFIG.flousi?.instructions,
+        isEnabled: true,
+      },
       payeer: {
         accountNumber: config.PAYMENT_CONFIG.payeer.accountNumber || 'P1084562143',
         accountName: 'HanGo Payeer',
@@ -62,6 +68,15 @@ async function getPaymentSettingsDoc() {
       };
       needsSave = true;
     }
+    if (!settings.flousi) {
+      settings.flousi = {
+        accountNumber: config.PAYMENT_CONFIG.flousi?.accountNumber || '29845347',
+        accountName: 'HanGo Flousi',
+        instructions: config.PAYMENT_CONFIG.flousi?.instructions,
+        isEnabled: true,
+      };
+      needsSave = true;
+    }
     if (needsSave) {
       await settings.save().catch(() => {});
     }
@@ -82,6 +97,7 @@ async function getPlansAndMethods(req, res) {
       methods: {
         d17: settings.d17,
         ooredoo: settings.ooredoo,
+        flousi: settings.flousi,
         payeer: settings.payeer,
         usdt: settings.usdt,
         binance: settings.binance,
@@ -101,7 +117,7 @@ async function getPlansAndMethods(req, res) {
  */
 async function updatePaymentSettings(req, res) {
   try {
-    const { d17, ooredoo, payeer, usdt, binance, plans } = req.body;
+    const { d17, ooredoo, flousi, payeer, usdt, binance, plans } = req.body;
     const settings = await getPaymentSettingsDoc();
 
     if (d17) {
@@ -118,6 +134,15 @@ async function updatePaymentSettings(req, res) {
       if (ooredoo.instructions !== undefined) settings.ooredoo.instructions = ooredoo.instructions;
       if (ooredoo.isEnabled !== undefined) settings.ooredoo.isEnabled = Boolean(ooredoo.isEnabled);
       settings.markModified('ooredoo');
+    }
+
+    if (flousi) {
+      if (!settings.flousi) settings.flousi = {};
+      if (flousi.accountNumber !== undefined) settings.flousi.accountNumber = String(flousi.accountNumber).trim();
+      if (flousi.accountName !== undefined) settings.flousi.accountName = flousi.accountName;
+      if (flousi.instructions !== undefined) settings.flousi.instructions = flousi.instructions;
+      if (flousi.isEnabled !== undefined) settings.flousi.isEnabled = Boolean(flousi.isEnabled);
+      settings.markModified('flousi');
     }
 
     if (payeer) {
@@ -158,6 +183,7 @@ async function updatePaymentSettings(req, res) {
       settings: {
         d17: settings.d17,
         ooredoo: settings.ooredoo,
+        flousi: settings.flousi,
         payeer: settings.payeer,
         usdt: settings.usdt,
         binance: settings.binance,
@@ -186,9 +212,9 @@ async function submitPayment(req, res) {
     }
 
     const cleanMethod = method.toLowerCase().trim();
-    if (!['d17', 'ooredoo', 'payeer', 'usdt', 'binance'].includes(cleanMethod)) {
+    if (!['d17', 'ooredoo', 'flousi', 'payeer', 'usdt', 'binance'].includes(cleanMethod)) {
       return res.status(400).json({
-        error: 'Invalid payment method. Choose "d17", "ooredoo", "payeer", "usdt", or "binance".',
+        error: 'Invalid payment method. Choose "d17", "ooredoo", "flousi", "payeer", "usdt", or "binance".',
       });
     }
 
@@ -212,7 +238,7 @@ async function submitPayment(req, res) {
     }
 
     const isUsdMethod = ['payeer', 'usdt', 'binance'].includes(cleanMethod);
-    const price = plan.prices[cleanMethod] ?? (isUsdMethod ? (plan.prices.usdt ?? plan.prices.payeer) : plan.prices.d17);
+    const price = plan.prices[cleanMethod] ?? (isUsdMethod ? (plan.prices.usdt ?? plan.prices.payeer) : (plan.prices.flousi ?? plan.prices.d17));
     const currency = isUsdMethod ? '$' : 'DT';
 
     // Prevent duplicate pending requests with the exact same reference
