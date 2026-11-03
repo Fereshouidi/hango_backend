@@ -26,6 +26,23 @@ function requireAuth(req, res, next) {
 }
 
 /**
+ * Middleware that extracts user if Bearer token is present, but doesn't block if missing
+ */
+function optionalAuth(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.split(' ')[1];
+    try {
+      const decoded = jwt.verify(token, config.JWT_SECRET);
+      req.user = decoded;
+    } catch (err) {
+      // Ignore expired/invalid token for optional routes
+    }
+  }
+  next();
+}
+
+/**
  * Middleware to require that the authenticated user has an active subscription or trial
  */
 async function requireSubscription(req, res, next) {
@@ -75,6 +92,7 @@ async function requireSubscription(req, res, next) {
 
 module.exports = {
   requireAuth,
+  optionalAuth,
   authenticateToken: requireAuth,
   requireSubscription,
 };

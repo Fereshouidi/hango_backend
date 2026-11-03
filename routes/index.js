@@ -3,6 +3,7 @@ const authRoutes = require('./auth');
 const syncRoutes = require('./sync');
 const updateRoutes = require('./updates');
 const paymentRoutes = require('./payments');
+const notificationRoutes = require('./notifications');
 const healthController = require('../controllers/healthController');
 const { ensureDBConnection } = require('../middleware/db');
 
@@ -22,5 +23,6 @@ router.use('/api/auth', authRoutes);
 router.use('/api/sync', syncRoutes);
 router.use('/api/updates', updateRoutes);
 router.use('/api/payments', paymentRoutes);
+router.use('/api/notifications', notificationRoutes);
 
 module.exports = router;

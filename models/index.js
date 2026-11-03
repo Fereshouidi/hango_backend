@@ -3,6 +3,7 @@ const Backup = require('./Backup');
 const Update = require('./Update');
 const Payment = require('./Payment');
 const PaymentSetting = require('./PaymentSetting');
+const Notification = require('./Notification');
 
 module.exports = {
   User,
@@ -10,4 +11,5 @@ module.exports = {
   Update,
   Payment,
   PaymentSetting,
+  Notification,
 };
