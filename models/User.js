@@ -21,6 +21,10 @@ const userSchema = new mongoose.Schema(
       sparse: true,
       trim: true,
     },
+    googlePhotoUrl: {
+      type: String,
+      default: null,
+    },
     passwordHash: {
       type: String,
       required: false,

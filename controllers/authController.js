@@ -234,6 +234,7 @@ function signUserToken(user) {
       email: user.email,
       username: user.username,
       appVersion: user.appVersion,
+      googlePhotoUrl: user.googlePhotoUrl || null,
     },
   };
 }
@@ -257,16 +258,27 @@ async function uniqueUsername(base) {
   return candidate;
 }
 
-async function fetchGoogleProfile(accessToken) {
-  const googleRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+async function fetchGoogleProfile(token) {
+  try {
+    // 1. Try as OAuth2 Access Token
+    let googleRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
 
-  if (!googleRes.ok) {
-    return null;
+    if (googleRes.ok) {
+      return await googleRes.json();
+    }
+
+    // 2. Try as OpenID Connect ID Token
+    googleRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(token)}`);
+    if (googleRes.ok) {
+      return await googleRes.json();
+    }
+  } catch (err) {
+    console.error('[Google fetchGoogleProfile error]', err);
   }
 
-  return googleRes.json();
+  return null;
 }
 
 /**
@@ -290,6 +302,7 @@ async function googleLogin(req, res) {
     const emailVerified = profile.email_verified === true || profile.email_verified === 'true';
     const email = typeof profile.email === 'string' ? profile.email.trim().toLowerCase() : '';
     const googleId = profile.sub ? String(profile.sub) : '';
+    const googlePhotoUrl = profile.picture || null;
 
     if (!googleId || !email || !emailVerified) {
       return res.status(400).json({
@@ -304,6 +317,7 @@ async function googleLogin(req, res) {
       user = await User.findOne({ email });
       if (user) {
         user.googleId = googleId;
+        if (googlePhotoUrl) user.googlePhotoUrl = googlePhotoUrl;
       } else {
         const username = await uniqueUsername(profile.name || profile.given_name || email.split('@')[0]);
         const now = new Date();
@@ -314,6 +328,7 @@ async function googleLogin(req, res) {
           email,
           username,
           googleId,
+          googlePhotoUrl,
           appVersion: version,
           platform: platform || 'unknown',
           lastLoginAt: now,
@@ -354,6 +369,10 @@ async function googleLogin(req, res) {
     if (platform) {
       user.platform = platform;
     }
+    // Always refresh the photo URL in case user updated their Google avatar
+    if (googlePhotoUrl) {
+      user.googlePhotoUrl = googlePhotoUrl;
+    }
     user.lastLoginAt = new Date();
     await user.save();
 
@@ -389,6 +408,7 @@ async function getProfile(req, res) {
         username: user.username,
         appVersion: user.appVersion,
         platform: user.platform,
+        googlePhotoUrl: user.googlePhotoUrl || null,
         createdAt: user.createdAt,
         lastLoginAt: user.lastLoginAt,
       },
