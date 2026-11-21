@@ -8,6 +8,7 @@ async function backup(req, res) {
   try {
     const userId = req.user.userId;
     const {
+      mode = 'replace',
       hsks,
       lessons,
       texts,
@@ -23,14 +24,64 @@ async function backup(req, res) {
       return res.status(400).json({ error: 'No data provided in backup payload.' });
     }
 
+    let finalHsks = Array.isArray(hsks) ? hsks : [];
+    let finalLessons = Array.isArray(lessons) ? lessons : [];
+    let finalTexts = Array.isArray(texts) ? texts : [];
+    let finalSentences = Array.isArray(sentences) ? sentences : [];
+    let finalWords = Array.isArray(words) ? words : [];
+    let finalCharacters = Array.isArray(characters) ? characters : [];
+    let finalRules = Array.isArray(rules) ? rules : [];
+    let finalJunctions = junctions && typeof junctions === 'object' ? junctions : {};
+
+    // If merge mode requested, combine with existing cloud data
+    if (mode === 'merge') {
+      const existingDoc = await Backup.findOne({ userId });
+      if (existingDoc && existingDoc.data) {
+        const old = existingDoc.data;
+
+        const mergeArrays = (oldArr, newArr, keyFn) => {
+          const map = new Map();
+          (oldArr || []).forEach((item) => {
+            const k = keyFn(item);
+            if (k !== undefined && k !== null && k !== '') map.set(k, item);
+          });
+          (newArr || []).forEach((item) => {
+            const k = keyFn(item);
+            if (k !== undefined && k !== null && k !== '') map.set(k, item);
+          });
+          return Array.from(map.values());
+        };
+
+        finalHsks = mergeArrays(old.hsks, finalHsks, (h) => (h.name ? h.name.trim().toLowerCase() : h.id));
+        finalLessons = mergeArrays(old.lessons, finalLessons, (l) => `${l.hskId || 0}_${l.num || 0}_${l.title || ''}`);
+        finalTexts = mergeArrays(old.texts, finalTexts, (t) => t.content?.trim() || t.title?.trim() || t.id);
+        finalSentences = mergeArrays(old.sentences, finalSentences, (s) => s.content?.trim() || s.id);
+        finalWords = mergeArrays(old.words, finalWords, (w) => w.content?.trim() || w.id);
+        finalCharacters = mergeArrays(old.characters, finalCharacters, (c) => c.content?.trim() || c.id);
+        finalRules = mergeArrays(old.rules, finalRules, (r) => r.content?.trim() || r.title?.trim() || r.id);
+
+        // Merge junctions
+        const mergedJ = { ...(old.junctions || {}) };
+        Object.keys(finalJunctions).forEach((k) => {
+          const oldList = Array.isArray(mergedJ[k]) ? mergedJ[k] : [];
+          const newList = Array.isArray(finalJunctions[k]) ? finalJunctions[k] : [];
+          const jMap = new Map();
+          oldList.forEach((j) => jMap.set(JSON.stringify(j), j));
+          newList.forEach((j) => jMap.set(JSON.stringify(j), j));
+          mergedJ[k] = Array.from(jMap.values());
+        });
+        finalJunctions = mergedJ;
+      }
+    }
+
     const stats = {
-      hsksCount: Array.isArray(hsks) ? hsks.length : 0,
-      lessonsCount: Array.isArray(lessons) ? lessons.length : 0,
-      textsCount: Array.isArray(texts) ? texts.length : 0,
-      sentencesCount: Array.isArray(sentences) ? sentences.length : 0,
-      wordsCount: Array.isArray(words) ? words.length : 0,
-      charactersCount: Array.isArray(characters) ? characters.length : 0,
-      rulesCount: Array.isArray(rules) ? rules.length : 0,
+      hsksCount: finalHsks.length,
+      lessonsCount: finalLessons.length,
+      textsCount: finalTexts.length,
+      sentencesCount: finalSentences.length,
+      wordsCount: finalWords.length,
+      charactersCount: finalCharacters.length,
+      rulesCount: finalRules.length,
     };
 
     const now = new Date();
@@ -51,14 +102,14 @@ async function backup(req, res) {
           appVersion: version || '1.0.0',
           stats,
           data: {
-            hsks: hsks || [],
-            lessons: lessons || [],
-            texts: texts || [],
-            sentences: sentences || [],
-            words: words || [],
-            characters: characters || [],
-            rules: rules || [],
-            junctions: junctions || {},
+            hsks: finalHsks,
+            lessons: finalLessons,
+            texts: finalTexts,
+            sentences: finalSentences,
+            words: finalWords,
+            characters: finalCharacters,
+            rules: finalRules,
+            junctions: finalJunctions,
           },
         },
       },
